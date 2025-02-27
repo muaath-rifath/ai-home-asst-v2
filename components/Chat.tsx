@@ -86,7 +86,7 @@ const Chat = () => {
     <div className="flex flex-col min-h-full bg-background relative">
       <div className="flex-1">
         <div className="w-full h-[calc(100vh-8rem)] flex overflow-y-auto hide-scrollbar">
-          <div className={`w-full max-w-3xl mx-auto px-3 sm:px-4 py-4 ${messages.length === 0 ? 'h-[calc(100vh-8rem)] flex items-center justify-center' : ''}`}>
+          <div className={`w-full max-w-3xl mx-auto px-3 sm:px-4 py-8 ${messages.length === 0 ? 'h-[calc(100vh-8rem)] flex items-center justify-center' : ''}`}>
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center space-y-3 sm:space-y-4">
                 <div className="rounded-full bg-primary/10 p-3 sm:p-4">

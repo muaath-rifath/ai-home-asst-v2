@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useSwipeable } from 'react-swipeable';
 
 interface SwipeableContainerProps {
@@ -11,6 +11,10 @@ interface SwipeableContainerProps {
 
 export function SwipeableContainer({ leftPanel, mainContent, rightPanel }: SwipeableContainerProps) {
   const [activePanel, setActivePanel] = useState<'left' | 'main' | 'right'>('main');
+  const [isDragging, setIsDragging] = useState(false);
+  const [startX, setStartX] = useState(0);
+  const [scrollX, setScrollX] = useState(0);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const handlers = useSwipeable({
     onSwipedLeft: () => {
@@ -23,6 +27,7 @@ export function SwipeableContainer({ leftPanel, mainContent, rightPanel }: Swipe
     },
     trackMouse: true,
     preventScrollOnSwipe: true,
+    delta: 10,
   });
 
   const translateClasses = {
@@ -31,53 +36,90 @@ export function SwipeableContainer({ leftPanel, mainContent, rightPanel }: Swipe
     right: '-translate-x-[85%]',
   };
 
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    setIsDragging(true);
+    setStartX(e.pageX - scrollX);
+    if (contentRef.current) {
+      contentRef.current.classList.add('dragging');
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDragging || !contentRef.current) return;
+
+    const currentX = e.pageX - startX;
+    const containerWidth = window.innerWidth;
+    const maxScroll = containerWidth * 0.85;
+
+    // Limit scrolling to the width of the side panels
+    const clampedX = Math.max(Math.min(currentX, maxScroll), -maxScroll);
+    setScrollX(clampedX);
+
+    // Update active panel based on scroll position
+    if (clampedX > maxScroll * 0.3) {
+      setActivePanel('left');
+    } else if (clampedX < -maxScroll * 0.3) {
+      setActivePanel('right');
+    } else {
+      setActivePanel('main');
+    }
+
+    contentRef.current.style.setProperty('--swipe-x', `${clampedX}px`);
+  };
+
+  const handleMouseUp = () => {
+    if (!isDragging || !contentRef.current) return;
+    setIsDragging(false);
+    setScrollX(0);
+    contentRef.current.classList.remove('dragging');
+    contentRef.current.style.removeProperty('--swipe-x');
+  };
+
+  // Clean up any lingering variables when component unmounts
+  useEffect(() => {
+    const currentContent = contentRef.current;
+    return () => {
+      if (currentContent) {
+        currentContent.style.removeProperty('--swipe-x');
+      }
+    };
+  }, []);
+
   return (
-    <div {...handlers} className="relative h-[calc(100vh-3.5rem)] overflow-hidden touch-pan-x">
+    <div 
+      {...handlers} 
+      className="fixed inset-0 top-14 overflow-hidden touch-pan-x select-none"
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+    >
       <div
-        className={`flex h-full transition-transform duration-300 ease-in-out ${translateClasses[activePanel]}`}
+        ref={contentRef}
+        className={`swipeable-content flex h-full transition-transform duration-300 ease-in-out ${
+          isDragging ? 'transition-none' : ''
+        } ${translateClasses[activePanel]}`}
       >
         {/* Left Panel */}
-        <div className="min-w-[85%] h-full -ml-[85%]">
-          {leftPanel}
+        <div className="min-w-[85%] h-full -ml-[85%] hide-scrollbar">
+          <div className="h-full overflow-y-auto">
+            {leftPanel}
+          </div>
         </div>
 
         {/* Main Content */}
-        <div className="min-w-full h-full">
-          {mainContent}
+        <div className="min-w-full h-full hide-scrollbar">
+          <div className="h-full">
+            {mainContent}
+          </div>
         </div>
 
         {/* Right Panel */}
-        <div className="min-w-[85%] h-full">
-          {rightPanel}
+        <div className="min-w-[85%] h-full hide-scrollbar">
+          <div className="h-full overflow-y-auto">
+            {rightPanel}
+          </div>
         </div>
-      </div>
-
-      {/* Navigation Dots */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 lg:hidden">
-        <button
-          onClick={() => setActivePanel('left')}
-          className={`w-2 h-2 rounded-full transition-colors ${
-            activePanel === 'left' ? 'bg-primary' : 'bg-muted'
-          }`}
-          aria-label="Show appliance controls"
-          title="Show appliance controls"
-        />
-        <button
-          onClick={() => setActivePanel('main')}
-          className={`w-2 h-2 rounded-full transition-colors ${
-            activePanel === 'main' ? 'bg-primary' : 'bg-muted'
-          }`}
-          aria-label="Show chat"
-          title="Show chat"
-        />
-        <button
-          onClick={() => setActivePanel('right')}
-          className={`w-2 h-2 rounded-full transition-colors ${
-            activePanel === 'right' ? 'bg-primary' : 'bg-muted'
-          }`}
-          aria-label="Show quick access"
-          title="Show quick access"
-        />
       </div>
     </div>
   );

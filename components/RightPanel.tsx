@@ -29,13 +29,12 @@ const mockEnergy = {
 
 export function RightPanel() {
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col min-h-full bg-background">
       <div className="flex-shrink-0 px-3 py-2 sm:px-4 sm:py-3 border-b">
         <h2 className="text-sm font-semibold sm:text-base lg:text-lg">Quick Access</h2>
         <p className="text-xs text-muted-foreground mt-0.5">Commands & Information</p>
       </div>
-
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto h-full">
         <div className="p-2 sm:p-3 lg:p-4 space-y-4 sm:space-y-6">
           <section className="space-y-2 sm:space-y-3">
             <h3 className="text-sm font-medium px-1">Quick Commands</h3>

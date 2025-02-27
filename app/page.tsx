@@ -8,19 +8,19 @@ export default function Home() {
     <>
       {/* Desktop Layout */}
       <div className="hidden lg:flex h-[calc(100vh-3.5rem)] divide-x">
-        <aside className="w-[280px] flex-shrink-0 overflow-y-auto">
+        <aside className="w-[280px] flex-shrink-0 overflow-y-auto hide-scrollbar">
           <ApplianceControl />
         </aside>
         <main className="flex-1">
           <Chat />
         </main>
-        <aside className="w-[320px] flex-shrink-0 overflow-y-auto border-l">
+        <aside className="w-[320px] flex-shrink-0 overflow-y-auto border-l hide-scrollbar">
           <RightPanel />
         </aside>
       </div>
 
       {/* Mobile/Tablet Layout */}
-      <div className="lg:hidden">
+      <div className="lg:hidden h-[calc(100vh-3.5rem)]">
         <SwipeableContainer
           leftPanel={<ApplianceControl />}
           mainContent={<Chat />}

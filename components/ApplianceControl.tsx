@@ -26,12 +26,12 @@ export function ApplianceControl() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col min-h-full bg-background">
       <div className="flex-shrink-0 px-3 py-2 sm:px-4 sm:py-3 border-b">
         <h2 className="text-sm font-semibold sm:text-base lg:text-lg">Appliance Control</h2>
         <p className="text-xs text-muted-foreground mt-0.5">Control your smart home devices</p>
       </div>
-      <div className="flex-1 overflow-y-auto p-2 sm:p-3 lg:p-4">
+      <div className="flex-1 overflow-y-auto h-full p-2 sm:p-3 lg:p-4">
         <div className="grid grid-cols-1 gap-2">
           {appliances.map((appliance) => (
             <button

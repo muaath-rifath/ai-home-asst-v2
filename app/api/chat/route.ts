@@ -2,12 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import mqtt from 'mqtt';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// MQTT Broker setup (use environment variables)
+// MQTT Broker setup
 const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://localhost';
-const MQTT_PORT = parseInt(process.env.MQTT_PORT || '1883', 10); // Ensure port is a number
+const MQTT_PORT = parseInt(process.env.MQTT_PORT || '1883', 10);
 const TOPIC_LED = 'device/led';
 
-// Connect to MQTT broker
 const broker = mqtt.connect(`${MQTT_BROKER_URL}:${MQTT_PORT}`);
 
 // Google Gemini API setup
@@ -22,79 +21,70 @@ const generationConfig = {
     responseMimeType: "text/plain",
 };
 
-// --- MQTT Connection Handlers ---
-broker.on('connect', () => {
-    console.log('Connected to MQTT broker');
-});
+broker.on('connect', () => console.log('Connected to MQTT broker'));
+broker.on('error', (error) => console.error('MQTT Error:', error));
 
-broker.on('error', (error) => {
-    console.error('MQTT Broker Connection Error:', error);
-});
-
-// --- Parameter Calculation ---
-function calculateBlinkParams(
-    userDelay?: number,
-    userTimes?: number,
-    userDuration?: number
-) {
+function calculateBlinkParams(userDelay?: number, userTimes?: number, userDuration?: number) {
     let delay: number;
     let times: number;
     let duration: number;
 
-    // Prioritize parameters: duration > times > delay
-    if (userDuration !== undefined) {
-        times = userTimes ?? 5; // Default to 5 cycles if times is not provided
+  if (userDuration !== undefined) {
+        times = userTimes ?? 5;
         delay = userDuration / (times * 2);
         duration = userDuration;
     } else if (userTimes !== undefined) {
-        delay = userDelay ?? 0.5; // Default to 0.5s delay if delay is not provided
+        delay = userDelay ?? 0.5;
         times = userTimes;
         duration = times * delay * 2;
     } else if (userDelay !== undefined) {
         delay = userDelay;
-        times = userTimes ?? 5; //Default to 5 cycles
+        times = userTimes ?? 5;
         duration = delay * times * 2;
-    }
-      else {
-        // Default values if no parameters provided
+    } else {
         delay = 0.5;
         times = 5;
         duration = 5;
     }
-
-    // Validation (optional, but good practice)
-    delay = Math.max(0.1, Math.min(delay, 10));     // 0.1s to 10s
-    times = Math.max(1, Math.min(times, 50));       // 1 to 50 times
-    duration = Math.max(0.2, Math.min(duration, 60)); // Ensure reasonable duration.
+     delay = Math.max(0.1, Math.min(delay, 10));
+     times = Math.max(1, Math.min(times, 50));
+     duration = Math.max(0.2, Math.min(duration, 60));
 
     return { delay, times, duration };
 }
 
-// --- Process Gemini Response ---
 async function processGeminiResponse(prompt: string) {
-    const systemPrompt = `Your name is Sol. You are a helpful home automation assistant.  When the user asks to control an LED, extract the desired state and parameters.
+  const systemPrompt = `Your name is Sol. You are a home automation assistant. Handle LED control requests as follows:
 
-For LED control commands, respond in a structured way, ONLY providing a code block with parameters and a concise natural language confirmation.
+- **Immediate ON:**
+    - "Turn on the LED": \`\`\`action:control,device:led,state:ON\`\`\`
+    - "Turn on the LED for [duration] seconds": \`\`\`action:control,device:led,state:ON,duration=[duration_seconds]\`\`\`
 
-- For turning ON the LED:
-    - If a duration is mentioned, respond with: "Turning LED ON for <duration> seconds" and the code block: \`\`\`action:control,device:led,state:ON,duration=<seconds>\`\`\`
-    - If NO duration is mentioned, respond with: "Turning LED ON" and the code block: \`\`\`action:control,device:led,state:ON\`\`\`
+- **Immediate OFF:**
+    - "Turn off the LED": \`\`\`action:control,device:led,state:OFF\`\`\`
 
-- For turning OFF the LED:
-    - Respond with: "Turning LED OFF" and the code block: \`\`\`action:control,device:led,state:OFF\`\`\`
+- **Delayed ON:**
+    - "Turn on the LED after [delay] seconds": \`\`\`action:control,device:led,state:DELAYED_ON,delay=[delay_seconds]\`\`\`
+    - "Turn on the LED after [delay] seconds for [duration] seconds": \`\`\`action:control,device:led,state:DELAYED_ON,delay=[delay_seconds],duration=[duration_seconds]\`\`\`
 
-- For blinking the LED:
-    - Respond with a natural language confirmation, e.g., "Blinking LED with delay <delay>s, <times> times, for <duration>s".
-    - Include a code block with ALL parameters, even if calculated: \`\`\`action:control,device:led,state:BLINK,delay=<seconds>,times=<number>,duration=<seconds>\`\`\`
-        - If only some parameters are provided, calculate the missing ones.  Prioritize duration, then times, then delay.
+- **Delayed OFF:**
+    -  "Turn off the LED after [delay] seconds": \`\`\`action:control,device:led,state:DELAYED_OFF,delay=[delay_seconds]\`\`\`
 
-For questions or other requests NOT related to LED control, respond naturally as a chatbot WITHOUT any code blocks.`;
+- **Blinking:**
+   - "Blink the LED": \`\`\`action:control,device:led,state:BLINK,delay=0.5,times=5,duration=5\`\`\` (default values)
+    - "Blink the LED [times] times": \`\`\`action:control,device:led,state:BLINK,times=[times],delay=0.5,duration=[calculated_duration]\`\`\`
+    - "Blink the LED with a delay of [delay] seconds": \`\`\`action:control,device:led,state:BLINK,delay=[delay],times=5,duration=[calculated_duration]\`\`\`
+    - "Blink the LED for [duration] seconds": \`\`\`action:control,device:led,state:BLINK,duration=[duration],times=5,delay=[calculated_delay]\`\`\`
+    - "Blink the LED [times] times with a delay of [delay] seconds": \`\`\`action:control,device:led,state:BLINK,times=[times],delay=[delay],duration=[calculated_duration]\`\`\`
+    - "Blink the LED for [duration] seconds with a delay of [delay] seconds": \`\`\`action:control,device:led,state:BLINK,duration=[duration],delay=[delay],times=[calculated_times]\`\`\`
+    - "Blink the LED [times] times for [duration] seconds": \`\`\`action:control,device:led,state:BLINK,times=[times],duration=[duration],delay=[calculated_delay]\`\`\`
+
+For any other request, respond naturally without code blocks. Always include ALL calculated parameters.`;
+
 
     const chatSession = model.startChat({
         generationConfig,
-        history: [
-            { role: "user", parts: [{ text: systemPrompt }] }
-        ]
+        history: [{ role: "user", parts: [{ text: systemPrompt }] }],
     });
 
     try {
@@ -104,7 +94,6 @@ For questions or other requests NOT related to LED control, respond naturally as
 
         let state: string | null = null;
         let params: Record<string, number> = {};
-        let isControlCommand = false;
 
         const codeBlockMatch = response.match(/```([\s\S]*?)```/);
         const codeBlockContent = codeBlockMatch ? codeBlockMatch[1].trim() : null;
@@ -113,14 +102,15 @@ For questions or other requests NOT related to LED control, respond naturally as
             const keyValuePairs = codeBlockContent.split(',').map(pair => pair.trim());
             const action = keyValuePairs.find(pair => pair.startsWith('action:'))?.split(':')[1];
             const device = keyValuePairs.find(pair => pair.startsWith('device:'))?.split(':')[1];
-            state = keyValuePairs.find(pair => pair.startsWith('state:'))?.split(':')[1] ?? null; // Use nullish coalescing
+            state = keyValuePairs.find(pair => pair.startsWith('state:'))?.split(':')[1] ?? null;
 
             if (action === 'control' && device === 'led' && state) {
-                isControlCommand = true;
-                let delay: number | undefined, times: number | undefined, duration:number | undefined;
+                let delay: number | undefined;
+                let times: number | undefined;
+                let duration: number | undefined;
 
                 keyValuePairs.forEach(pair => {
-                    const [key, value] = pair.split('='); // Split only on the first '='
+                    const [key, value] = pair.split('=');
                     if (key === 'duration') duration = parseFloat(value);
                     if (key === 'delay') delay = parseFloat(value);
                     if (key === 'times') times = parseInt(value, 10);
@@ -130,23 +120,23 @@ For questions or other requests NOT related to LED control, respond naturally as
                     params = calculateBlinkParams(delay, times, duration);
                 } else if (state === 'ON' && duration !== undefined) {
                     params = { duration };
+                } else if (state === 'DELAYED_ON') {
+                    params = { delay: delay ?? 0 };
+                    if (duration !== undefined) params.duration = duration;
+                } else if (state === 'DELAYED_OFF') {
+                    params = { delay: delay ?? 0 };
                 }
             }
         }
 
-        if (isControlCommand) {
-            return { type: 'control', state, params, response };
-        } else {
-            return { type: 'chat', response };
-        }
+        return { type: 'control', state, params, response };
 
-    } catch (error: unknown) {
-        console.error("Gemini API Error:", error instanceof Error ? error.message : 'Unknown error');
-        return { type: 'error', response: "Failed to get a response from the AI model." };
+    } catch (error) {
+        console.error("Gemini Error:", error instanceof Error ? error.message : 'Unknown error');
+        return { type: 'error', response: "AI error." };
     }
 }
 
-// --- POST Handler ---
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
@@ -163,14 +153,14 @@ export async function POST(request: NextRequest) {
             const mqttPayload = JSON.stringify({ state: geminiResponse.state, params: geminiResponse.params });
             console.log("MQTT Payload:", mqttPayload);
             broker.publish(TOPIC_LED, mqttPayload);
-            return NextResponse.json({ success: true, message: "Message sent to device", response: geminiResponse.response });
+            return NextResponse.json({ success: true, message: "Command sent", response: geminiResponse.response });
         } else if (geminiResponse.type === 'chat') {
-            return NextResponse.json({ success: true, message: "Chat response.", response: geminiResponse.response });
+            return NextResponse.json({ success: true, message: "Chat response", response: geminiResponse.response });
         } else {
-            return NextResponse.json({ success: false, message: "AI processing error", response: geminiResponse.response }, { status: 500 });
+            return NextResponse.json({ success: false, message: "AI error", response: geminiResponse.response }, { status: 500 });
         }
-    } catch (error: unknown) {
-        console.error("Error processing request:", error);
-        return NextResponse.json({ error: 'Error processing prompt', details: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 });
+    } catch (error) {
+        console.error("Request Error:", error);
+        return NextResponse.json({ error: 'Request error', details: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 });
     }
 }

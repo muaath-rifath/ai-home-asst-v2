@@ -44,7 +44,9 @@ const Chat = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ prompt: input }),
+        body: JSON.stringify({ 
+          prompt: input,
+        }),
       });
 
       const data = await response.json();
@@ -53,17 +55,20 @@ const Chat = () => {
         throw new Error(data.error || 'Failed to get response');
       }
 
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: data.response,
-      };
-
-      setMessages(prev => [...prev, assistantMessage]);
+      if (data.success) {
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: data.response,
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+      } else {
+        throw new Error(data.message || 'AI error');
+      }
     } catch (error) {
       console.error('Error:', error);
       const errorMessage: Message = {
         role: 'assistant',
-        content: 'Sorry, there was an error processing your request.',
+        content: error instanceof Error ? error.message : 'Sorry, there was an error processing your request.',
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {

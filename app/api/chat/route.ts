@@ -21,6 +21,9 @@ const generationConfig = {
     responseMimeType: "text/plain",
 };
 
+// Store chat history
+let chatHistory: { role: string, parts: { text: string }[] }[] = [];
+
 broker.on('connect', () => console.log('Connected to MQTT broker'));
 broker.on('error', (error) => console.error('MQTT Error:', error));
 
@@ -54,7 +57,10 @@ function calculateBlinkParams(userDelay?: number, userTimes?: number, userDurati
 }
 
 async function processGeminiResponse(prompt: string) {
-  const systemPrompt = `Your name is Sol. You are a home automation assistant. Handle LED control requests as follows:
+    const systemPrompt = `Your name is Sol. 
+    You are a home automation assistant. 
+    Introduce yourself when the user greets. Give your response in markdown. 
+    Handle LED control requests as follows:
 
 - **Immediate ON:**
     - "Turn on the LED": \`\`\`action:control,device:led,state:ON\`\`\`
@@ -81,16 +87,34 @@ async function processGeminiResponse(prompt: string) {
 
 For any other request, respond naturally without code blocks. Always include ALL calculated parameters.`;
 
+    // Initialize chat with system prompt if history is empty
+    if (chatHistory.length === 0) {
+        chatHistory.push({ role: "user", parts: [{ text: systemPrompt }] });
+    }
+
+    // Add user message to history
+    chatHistory.push({ role: "user", parts: [{ text: prompt }] });
 
     const chatSession = model.startChat({
         generationConfig,
-        history: [{ role: "user", parts: [{ text: systemPrompt }] }],
+        history: chatHistory,
     });
 
     try {
         const result = await chatSession.sendMessage(prompt);
         const response = result.response.text();
         console.log("Gemini Response:", response);
+
+        // Add assistant's response to history
+        chatHistory.push({ role: "model", parts: [{ text: response }] });
+
+        // Limit history size to prevent token limit issues (keep last 10 messages)
+        if (chatHistory.length > 11) { // 11 = system prompt + 10 messages
+            chatHistory = [
+                chatHistory[0], // Keep system prompt
+                ...chatHistory.slice(-10) // Keep last 10 messages
+            ];
+        }
 
         let state: string | null = null;
         let params: Record<string, number> = {};
@@ -126,10 +150,13 @@ For any other request, respond naturally without code blocks. Always include ALL
                 } else if (state === 'DELAYED_OFF') {
                     params = { delay: delay ?? 0 };
                 }
+                
+                return { type: 'control', state, params, response };
             }
         }
 
-        return { type: 'control', state, params, response };
+        // If no control command was found, return as chat response
+        return { type: 'chat', response };
 
     } catch (error) {
         console.error("Gemini Error:", error instanceof Error ? error.message : 'Unknown error');

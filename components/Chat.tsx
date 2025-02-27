@@ -77,60 +77,127 @@ const Chat = () => {
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !event.shiftKey) {
       handleSubmit(event as unknown as React.FormEvent);
     }
   };
 
   return (
-    <div className="container mx-auto p-4">
-      <div className="chat-header text-center mb-4">
-        <h1 className="text-2xl font-bold">AI Home Assistant</h1>
-      </div>
-      <div className="chat-box bg-gray-100 p-4 rounded-lg shadow-md h-96 overflow-y-auto">
-        {messages.map((message, index) => (
-          <div
-            key={index}
-            className={`message mb-2 p-2 rounded ${
-              message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-300 text-black'
-            }`}
-          >
-            {message.role === 'assistant' ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-            ) : (
-              message.content
-            )}
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex items-center justify-between border-b px-4 py-2">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <span className="text-lg font-semibold">S</span>
           </div>
-        ))}
-        {isLoading && <div className="bot-message loading-message text-gray-500">Loading...</div>}
-        <div ref={messagesEndRef}></div>
+          <div>
+            <h2 className="font-semibold">Sol Assistant</h2>
+            <p className="text-sm text-muted-foreground">Always active</p>
+          </div>
+        </div>
       </div>
-      <form onSubmit={handleSubmit} className="p-4 bg-white border-t">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Type your message..."
-            className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+      <div className="flex-1 overflow-hidden">
+        <div className="h-full overflow-y-auto px-4 pt-4">
+          {messages.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center space-y-4 text-center">
+              <div className="rounded-full bg-primary/10 p-4">
+                <div className="h-12 w-12 rounded-full bg-primary/25" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="font-semibold">Welcome to Sol</h3>
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  Your AI home assistant. Ask me anything about controlling your home or get insights about energy usage.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 pb-4">
+              {messages.map((message, index) => (
+                <div
+                  key={index}
+                  className={`flex ${
+                    message.role === 'user' ? 'justify-end' : 'justify-start'
+                  }`}
+                >
+                  <div
+                    className={`group relative flex max-w-[85%] items-end gap-2 ${
+                      message.role === 'user' ? 'flex-row-reverse' : ''
+                    }`}
+                  >
+                    {message.role === 'assistant' && (
+                      <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground">
+                        <span className="text-sm font-semibold">S</span>
+                      </div>
+                    )}
+                    <div
+                      className={`overflow-hidden rounded-2xl px-4 py-2.5 ${
+                        message.role === 'user'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted'
+                      }`}
+                    >
+                      {message.role === 'assistant' ? (
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {message.content}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p>{message.content}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="flex items-end gap-2">
+                    <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground">
+                      <span className="text-sm font-semibold">S</span>
+                    </div>
+                    <div className="rounded-2xl bg-muted px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-2 animate-bounce rounded-full bg-current"></div>
+                        <div className="h-2 w-2 animate-bounce rounded-full bg-current [animation-delay:0.2s]"></div>
+                        <div className="h-2 w-2 animate-bounce rounded-full bg-current [animation-delay:0.4s]"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="border-t p-4">
+        <form onSubmit={handleSubmit} className="flex items-end gap-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              placeholder="Message Sol..."
+              className="w-full rounded-full bg-muted px-4 py-2 focus:outline-none focus:ring-2 focus:ring-ring"
+              disabled={isLoading}
+            />
+          </div>
           <button
             type="submit"
             disabled={isLoading}
-            className="bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600 transition-colors disabled:bg-blue-300"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
             aria-label="Send message"
           >
             <Image
               src={sendIcon}
               alt="Send"
-              width={24}
-              height={24}
+              width={20}
+              height={20}
               className="invert"
             />
           </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 };

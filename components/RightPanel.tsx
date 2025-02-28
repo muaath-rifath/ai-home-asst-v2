@@ -6,13 +6,17 @@ import {
   StarIcon,
   SunIcon,
   TimerIcon,
+  LockClosedIcon,
+  CrossCircledIcon,
 } from "@radix-ui/react-icons";
 
 const quickCommands = [
-  { id: 1, command: "Turn off all lights", icon: <LightningBoltIcon /> },
-  { id: 2, command: "Set night mode", icon: <StarIcon /> },
-  { id: 3, command: "Check temperature", icon: <SunIcon /> },
-  { id: 4, command: "Set timer for LED", icon: <TimerIcon /> },
+  { id: 1, command: "Turn off all lights", icon: <LightningBoltIcon />, prompt: "Turn off all lights in the house" },
+  { id: 2, command: "Night mode", icon: <StarIcon />, prompt: "Set night mode" },
+  { id: 3, command: "Temperature", icon: <SunIcon />, prompt: "Check temperature in all rooms" },
+  { id: 4, command: "Set timer", icon: <TimerIcon />, prompt: "Set bedroom light timer for 30 minutes" },
+  { id: 5, command: "All devices off", icon: <CrossCircledIcon />, prompt: "Turn off all devices" },
+  { id: 6, command: "Security on", icon: <LockClosedIcon />, prompt: "Turn on security system" },
 ];
 
 const mockWeather = {
@@ -28,6 +32,29 @@ const mockEnergy = {
 };
 
 export function RightPanel() {
+  const [isLoading, setIsLoading] = React.useState(false);
+
+  const executeCommand = async (prompt: string) => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prompt }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to execute command');
+      }
+    } catch (error) {
+      console.error('Error executing command:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="flex flex-col min-h-full bg-background">
       <div className="flex-shrink-0 px-3 py-2 sm:px-4 sm:py-3 border-b">
@@ -42,7 +69,11 @@ export function RightPanel() {
               {quickCommands.map((cmd) => (
                 <button
                   key={cmd.id}
-                  className="flex items-center gap-3 w-full rounded-lg border bg-card p-3 text-sm hover:bg-muted transition-colors"
+                  onClick={() => executeCommand(cmd.prompt)}
+                  disabled={isLoading}
+                  className={`flex items-center gap-3 w-full rounded-lg border bg-card p-3 text-sm hover:bg-muted transition-colors ${
+                    isLoading ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                 >
                   <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     {cmd.icon}

@@ -1,13 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
-import mqtt from 'mqtt';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { headers } from 'next/headers';
 
-// MQTT Broker setup
-const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://localhost';
-const MQTT_PORT = parseInt(process.env.MQTT_PORT || '1883', 10);
-const TOPIC_LED = 'device/led';
+// Base URL for API calls
+async function getBaseUrl() {
+    // Server-side
+    const headersList = await headers();
+    const forwardedHost = await headersList.get('x-forwarded-host');
+    const forwardedProto = await headersList.get('x-forwarded-proto');
+    
+    return forwardedHost
+        ? `${forwardedProto || 'http'}://${forwardedHost}`
+        : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+}
 
-const broker = mqtt.connect(`${MQTT_BROKER_URL}:${MQTT_PORT}`);
+// Device types and states
+type DeviceType = 'light' | 'fan' | 'security';
+type DeviceState = 'ON' | 'OFF';
+
+interface Device {
+    id: string;
+    name: string;
+    type: DeviceType;
+    status: boolean;
+    features: {
+        hasTimer?: boolean;
+        hasSchedule?: boolean;
+    };
+}
+
+interface Client {
+    id: string;
+    name: string;
+    location: string;
+    devices: Device[];
+    isOnline: boolean;
+    lastSeen?: Date;
+}
 
 // Google Gemini API setup
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
@@ -18,106 +47,117 @@ const generationConfig = {
     topP: 0.95,
     topK: 40,
     maxOutputTokens: 8192,
-    responseMimeType: "text/plain",
 };
 
 // Store chat history
 let chatHistory: { role: string, parts: { text: string }[] }[] = [];
 
-broker.on('connect', () => console.log('Connected to MQTT broker'));
-broker.on('error', (error) => console.error('MQTT Error:', error));
+async function getDeviceInfo(location: string, deviceType: DeviceType, deviceName: string): Promise<{ clientId: string; deviceId: string } | null> {
+    try {
+        const baseUrl = await getBaseUrl();
+        const encodedLocation = encodeURIComponent(location);
+        const url = new URL(`/api/device`, baseUrl);
+        url.searchParams.append('location', encodedLocation);
 
-function calculateBlinkParams(userDelay?: number, userTimes?: number, userDuration?: number) {
-    let delay: number;
-    let times: number;
-    let duration: number;
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) {
+            console.error('Device API error:', await res.text());
+            return null;
+        }
 
-  if (userDuration !== undefined) {
-        times = userTimes ?? 5;
-        delay = userDuration / (times * 2);
-        duration = userDuration;
-    } else if (userTimes !== undefined) {
-        delay = userDelay ?? 0.5;
-        times = userTimes;
-        duration = times * delay * 2;
-    } else if (userDelay !== undefined) {
-        delay = userDelay;
-        times = userTimes ?? 5;
-        duration = delay * times * 2;
-    } else {
-        delay = 0.5;
-        times = 5;
-        duration = 5;
+        const data: { clients: Client[] } = await res.json();
+        
+        const client = data.clients?.[0];
+        if (!client) return null;
+
+        const device = client.devices.find((d: Device) => 
+            d.type === deviceType && 
+            d.name.toLowerCase() === deviceName.toLowerCase()
+        );
+
+        if (!device) return null;
+
+        return {
+            clientId: client.id,
+            deviceId: device.id
+        };
+    } catch (error) {
+        console.error('Error getting device info:', error);
+        return null;
     }
-     delay = Math.max(0.1, Math.min(delay, 10));
-     times = Math.max(1, Math.min(times, 50));
-     duration = Math.max(0.2, Math.min(duration, 60));
+}
 
-    return { delay, times, duration };
+async function controlDevice(clientId: string, deviceId: string, type: DeviceType, command: { state: DeviceState }) {
+    try {
+        const baseUrl = await getBaseUrl();
+        const url = new URL('/api/device', baseUrl);
+
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                clientId,
+                deviceId,
+                type,
+                command
+            }),
+        });
+
+        if (!res.ok) {
+            console.error('Control device error:', await res.text());
+            return { success: false };
+        }
+
+        return res.json();
+    } catch (error) {
+        console.error('Error controlling device:', error);
+        return { success: false };
+    }
 }
 
 async function processGeminiResponse(prompt: string) {
     const systemPrompt = `Your name is Sol. 
     You are a home automation assistant. 
-    Introduce yourself when the user greets. Give your response in markdown. 
-    Handle LED control requests as follows:
+    Introduce yourself when the user greets. Give your response in markdown.
+    You can control various devices in different rooms:
 
-- **Immediate ON:**
-    - "Turn on the LED": \`\`\`action:control,device:led,state:ON\`\`\`
-    - "Turn on the LED for [duration] seconds": \`\`\`action:control,device:led,state:ON,duration=[duration_seconds]\`\`\`
-
-- **Immediate OFF:**
-    - "Turn off the LED": \`\`\`action:control,device:led,state:OFF\`\`\`
-
-- **Delayed ON:**
-    - "Turn on the LED after [delay] seconds": \`\`\`action:control,device:led,state:DELAYED_ON,delay=[delay_seconds]\`\`\`
-    - "Turn on the LED after [delay] seconds for [duration] seconds": \`\`\`action:control,device:led,state:DELAYED_ON,delay=[delay_seconds],duration=[duration_seconds]\`\`\`
-
-- **Delayed OFF:**
-    -  "Turn off the LED after [delay] seconds": \`\`\`action:control,device:led,state:DELAYED_OFF,delay=[delay_seconds]\`\`\`
-
-- **Blinking:**
-   - "Blink the LED": \`\`\`action:control,device:led,state:BLINK,delay=0.5,times=5,duration=5\`\`\` (default values)
-    - "Blink the LED [times] times": \`\`\`action:control,device:led,state:BLINK,times=[times],delay=0.5,duration=[calculated_duration]\`\`\`
-    - "Blink the LED with a delay of [delay] seconds": \`\`\`action:control,device:led,state:BLINK,delay=[delay],times=5,duration=[calculated_duration]\`\`\`
-    - "Blink the LED for [duration] seconds": \`\`\`action:control,device:led,state:BLINK,duration=[duration],times=5,delay=[calculated_delay]\`\`\`
-    - "Blink the LED [times] times with a delay of [delay] seconds": \`\`\`action:control,device:led,state:BLINK,times=[times],delay=[delay],duration=[calculated_duration]\`\`\`
-    - "Blink the LED for [duration] seconds with a delay of [delay] seconds": \`\`\`action:control,device:led,state:BLINK,duration=[duration],delay=[delay],times=[calculated_times]\`\`\`
-    - "Blink the LED [times] times for [duration] seconds": \`\`\`action:control,device:led,state:BLINK,times=[times],duration=[duration],delay=[calculated_delay]\`\`\`
-
-For any other request, respond naturally without code blocks. Always include ALL calculated parameters.`;
+    Lights:
+    - "Turn on/off the [room] light": \`\`\`action:control,type:light,location:[room],name:Main Light,state:ON/OFF\`\`\`
+    - "Turn on/off [room]'s [name] light": \`\`\`action:control,type:light,location:[room],name:[name] Light,state:ON/OFF\`\`\`
+    
+    Fans:
+    - "Turn on/off the [room] fan": \`\`\`action:control,type:fan,location:[room],name:Ceiling Fan,state:ON/OFF\`\`\`
+    
+    Security System:
+    - "Turn on/off security system": \`\`\`action:control,type:security,state:ON/OFF\`\`\``;
 
     // Initialize chat with system prompt if history is empty
     if (chatHistory.length === 0) {
         chatHistory.push({ role: "user", parts: [{ text: systemPrompt }] });
     }
 
-    // Add user message to history
     chatHistory.push({ role: "user", parts: [{ text: prompt }] });
 
-    const chatSession = model.startChat({
-        generationConfig,
-        history: chatHistory,
-    });
-
     try {
+        const chatSession = model.startChat({
+            generationConfig,
+            history: chatHistory,
+        });
+
         const result = await chatSession.sendMessage(prompt);
         const response = result.response.text();
-        console.log("Gemini Response:", response);
-
-        // Add assistant's response to history
+        
         chatHistory.push({ role: "model", parts: [{ text: response }] });
 
-        // Limit history size to prevent token limit issues (keep last 10 messages)
-        if (chatHistory.length > 11) { // 11 = system prompt + 10 messages
+        // Limit history size (keep last 10 messages + system prompt)
+        if (chatHistory.length > 11) {
             chatHistory = [
-                chatHistory[0], // Keep system prompt
-                ...chatHistory.slice(-10) // Keep last 10 messages
+                chatHistory[0],
+                ...chatHistory.slice(-10)
             ];
         }
-
-        let state: string | null = null;
-        let params: Record<string, number> = {};
 
         const codeBlockMatch = response.match(/```([\s\S]*?)```/);
         const codeBlockContent = codeBlockMatch ? codeBlockMatch[1].trim() : null;
@@ -125,37 +165,26 @@ For any other request, respond naturally without code blocks. Always include ALL
         if (codeBlockContent) {
             const keyValuePairs = codeBlockContent.split(',').map(pair => pair.trim());
             const action = keyValuePairs.find(pair => pair.startsWith('action:'))?.split(':')[1];
-            const device = keyValuePairs.find(pair => pair.startsWith('device:'))?.split(':')[1];
-            state = keyValuePairs.find(pair => pair.startsWith('state:'))?.split(':')[1] ?? null;
+            const type = keyValuePairs.find(pair => pair.startsWith('type:'))?.split(':')[1] as DeviceType | undefined;
+            const location = keyValuePairs.find(pair => pair.startsWith('location:'))?.split(':')[1];
+            const name = keyValuePairs.find(pair => pair.startsWith('name:'))?.split(':')[1];
+            const state = keyValuePairs.find(pair => pair.startsWith('state:'))?.split(':')[1] as DeviceState | undefined;
 
-            if (action === 'control' && device === 'led' && state) {
-                let delay: number | undefined;
-                let times: number | undefined;
-                let duration: number | undefined;
-
-                keyValuePairs.forEach(pair => {
-                    const [key, value] = pair.split('=');
-                    if (key === 'duration') duration = parseFloat(value);
-                    if (key === 'delay') delay = parseFloat(value);
-                    if (key === 'times') times = parseInt(value, 10);
-                });
-
-                if (state === 'BLINK') {
-                    params = calculateBlinkParams(delay, times, duration);
-                } else if (state === 'ON' && duration !== undefined) {
-                    params = { duration };
-                } else if (state === 'DELAYED_ON') {
-                    params = { delay: delay ?? 0 };
-                    if (duration !== undefined) params.duration = duration;
-                } else if (state === 'DELAYED_OFF') {
-                    params = { delay: delay ?? 0 };
+            if (action === 'control' && type && state && location && name) {
+                try {
+                    const deviceInfo = await getDeviceInfo(location, type, name);
+                    if (deviceInfo) {
+                        const result = await controlDevice(deviceInfo.clientId, deviceInfo.deviceId, type, { state });
+                        if (result.success) {
+                            return { type: 'control', success: true, response };
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error processing command:', error);
                 }
-                
-                return { type: 'control', state, params, response };
             }
         }
 
-        // If no control command was found, return as chat response
         return { type: 'chat', response };
 
     } catch (error) {
@@ -173,21 +202,15 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
         }
 
-        const geminiResponse = await processGeminiResponse(prompt);
-
-        if (geminiResponse.type === 'control' && geminiResponse.state) {
-            console.log("Gemini Response:", geminiResponse);
-            const mqttPayload = JSON.stringify({ state: geminiResponse.state, params: geminiResponse.params });
-            console.log("MQTT Payload:", mqttPayload);
-            broker.publish(TOPIC_LED, mqttPayload);
-            return NextResponse.json({ success: true, message: "Command sent", response: geminiResponse.response });
-        } else if (geminiResponse.type === 'chat') {
-            return NextResponse.json({ success: true, message: "Chat response", response: geminiResponse.response });
-        } else {
-            return NextResponse.json({ success: false, message: "AI error", response: geminiResponse.response }, { status: 500 });
-        }
+        const response = await processGeminiResponse(prompt);
+        return NextResponse.json({ 
+            success: true,
+            ...response
+        });
     } catch (error) {
-        console.error("Request Error:", error);
-        return NextResponse.json({ error: 'Request error', details: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 });
+        return NextResponse.json({ 
+            error: 'Request error', 
+            details: error instanceof Error ? error.message : 'Unknown error' 
+        }, { status: 500 });
     }
 }

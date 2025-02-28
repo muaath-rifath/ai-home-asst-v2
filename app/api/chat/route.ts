@@ -49,8 +49,13 @@ const generationConfig = {
     maxOutputTokens: 8192,
 };
 
-// Store chat history
+// Store chat history and last controlled device state
 let chatHistory: { role: string, parts: { text: string }[] }[] = [];
+let lastControlledDevice = {
+    type: null as DeviceType | null,
+    location: null as string | null,
+    name: null as string | null
+};
 
 async function getDeviceInfo(location: string, deviceType: DeviceType, deviceName: string): Promise<{ clientId: string; deviceId: string } | null> {
     try {
@@ -119,8 +124,15 @@ async function controlDevice(clientId: string, deviceId: string, type: DeviceTyp
 
 async function processGeminiResponse(prompt: string) {
     const systemPrompt = `Your name is Sol. 
-    You are a home automation assistant. 
+    You are a home automation assistant. Keep track of the last device controlled.
     Introduce yourself when the user greets. Give your response in markdown.
+
+    Important rules:
+    - Remember the last device you controlled
+    - If user says "turn it off/on" refer to the last controlled device
+    - When controlling a device, store its details for future reference
+    - Be proactive in understanding context from previous messages
+    
     You can control various devices in different rooms:
 
     Lights:
@@ -131,14 +143,22 @@ async function processGeminiResponse(prompt: string) {
     - "Turn on/off the [room] fan": \`\`\`action:control,type:fan,location:[room],name:Ceiling Fan,state:ON/OFF\`\`\`
     
     Security System:
-    - "Turn on/off security system": \`\`\`action:control,type:security,state:ON/OFF\`\`\``;
+    - "Turn on/off security system": \`\`\`action:control,type:security,state:ON/OFF\`\`\`
+    
+    When user refers to "it" or gives commands without specifying a device, use the last controlled device's details.`;
 
     // Initialize chat with system prompt if history is empty
     if (chatHistory.length === 0) {
         chatHistory.push({ role: "user", parts: [{ text: systemPrompt }] });
     }
 
-    chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+    // Add previous device context to prompt if the user is referring to "it"
+    let contextualPrompt = prompt;
+    if (prompt.toLowerCase().includes('turn it') && lastControlledDevice.type && lastControlledDevice.location && lastControlledDevice.name) {
+        contextualPrompt = `(Context: Last controlled device was the ${lastControlledDevice.name} ${lastControlledDevice.type} in ${lastControlledDevice.location}) ${prompt}`;
+    }
+
+    chatHistory.push({ role: "user", parts: [{ text: contextualPrompt }] });
 
     try {
         const chatSession = model.startChat({
@@ -146,7 +166,7 @@ async function processGeminiResponse(prompt: string) {
             history: chatHistory,
         });
 
-        const result = await chatSession.sendMessage(prompt);
+        const result = await chatSession.sendMessage(contextualPrompt);
         const response = result.response.text();
         
         chatHistory.push({ role: "model", parts: [{ text: response }] });
@@ -171,10 +191,46 @@ async function processGeminiResponse(prompt: string) {
             const state = keyValuePairs.find(pair => pair.startsWith('state:'))?.split(':')[1] as DeviceState | undefined;
 
             if (action === 'control' && type && state && location && name) {
+                // Update last controlled device
+                lastControlledDevice = {
+                    type,
+                    location,
+                    name: name.replace(' Light', '')  // Store clean name without "Light" suffix
+                };
+
                 try {
                     const deviceInfo = await getDeviceInfo(location, type, name);
                     if (deviceInfo) {
                         const result = await controlDevice(deviceInfo.clientId, deviceInfo.deviceId, type, { state });
+                        if (result.success) {
+                            return { type: 'control', success: true, response };
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error processing command:', error);
+                }
+            }
+        } else if (prompt.toLowerCase().includes('turn it')) {
+            // Handle "turn it on/off" for last controlled device
+            if (lastControlledDevice.type && lastControlledDevice.location && lastControlledDevice.name) {
+                const state = prompt.toLowerCase().includes('on') ? 'ON' : 'OFF';
+                const name = lastControlledDevice.type === 'light' 
+                    ? `${lastControlledDevice.name} Light` 
+                    : lastControlledDevice.name;
+
+                try {
+                    const deviceInfo = await getDeviceInfo(
+                        lastControlledDevice.location, 
+                        lastControlledDevice.type as DeviceType, 
+                        name
+                    );
+                    if (deviceInfo) {
+                        const result = await controlDevice(
+                            deviceInfo.clientId, 
+                            deviceInfo.deviceId, 
+                            lastControlledDevice.type as DeviceType, 
+                            { state }
+                        );
                         if (result.success) {
                             return { type: 'control', success: true, response };
                         }

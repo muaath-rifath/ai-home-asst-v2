@@ -66,97 +66,47 @@ export function ApplianceControl() {
   const [clients, setClients] = React.useState<Client[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [deviceValues, setDeviceValues] = React.useState<Record<string, number>>({});
-  const wsRef = React.useRef<WebSocket | null>(null);
-
-  // Setup WebSocket connection for real-time updates
-  React.useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}`;
-    const ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-      console.log('WebSocket connected');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'deviceUpdate') {
-          setClients(prev => prev.map(client => {
-            if (client.id === data.clientId) {
-              return {
-                ...client,
-                devices: client.devices.map(device => {
-                  if (device.id === data.deviceId) {
-                    return {
-                      ...device,
-                      status: data.status,
-                      value: data.value
-                    };
-                  }
-                  return device;
-                })
-              };
-            }
-            return client;
-          }));
-
-          if (data.value !== undefined) {
-            setDeviceValues(prev => ({
-              ...prev,
-              [`${data.clientId}/${data.deviceId}`]: data.value
-            }));
+  
+  // Fetch device status
+  const fetchStatus = React.useCallback(async () => {
+    try {
+      const response = await fetch('/api/device');
+      if (!response.ok) throw new Error('Failed to fetch status');
+      const data = await response.json();
+      setClients(data.clients);
+      // Update device values
+      const newValues: Record<string, number> = {};
+      data.clients.forEach((client: Client) => {
+        client.devices.forEach((device: Device) => {
+          if ((device.features.dimmable || device.features.speedControl) && device.value !== undefined) {
+            newValues[`${client.id}/${device.id}`] = device.value;
           }
-        } else if (data.type === 'clientUpdate') {
-          setClients(prev => prev.map(client => 
-            client.id === data.clientId 
-              ? { ...client, isOnline: data.status === 'online' }
-              : client
-          ));
-        }
-      } catch (error) {
-        console.error('Error processing WebSocket message:', error);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
-    wsRef.current = ws;
-    return () => {
-      ws.close();
-    };
-  }, []);
-
-  // Initial fetch
-  React.useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const response = await fetch('/api/device');
-        if (!response.ok) throw new Error('Failed to fetch status');
-        const data = await response.json();
-        setClients(data.clients);
-
-        // Update device values
-        const newValues: Record<string, number> = {};
-        data.clients.forEach((client: Client) => {
-          client.devices.forEach((device: Device) => {
-            if ((device.features.dimmable || device.features.speedControl) && device.value !== undefined) {
-              newValues[`${client.id}/${device.id}`] = device.value;
-            }
-          });
         });
-        setDeviceValues(prev => ({...prev, ...newValues}));
-      } catch (error) {
-        console.error('Error fetching status:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchStatus();
+      });
+      setDeviceValues(prev => ({...prev, ...newValues}));
+    } catch (error) {
+      console.error('Error fetching status:', error);
+    }
   }, []);
+
+  // Initial fetch and polling setup
+  React.useEffect(() => {
+    // Initial fetch
+    const init = async () => {
+      await fetchStatus();
+      setIsLoading(false);
+    };
+    init();
+
+    // Set up polling every 1 second
+    const pollInterval = setInterval(fetchStatus, 1000);
+
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, [fetchStatus]);
+
+  // Remove WebSocket setup for now since it's not implemented in the backend
 
   const getDeviceIcon = (type: Device['type']) => {
     switch (type) {
